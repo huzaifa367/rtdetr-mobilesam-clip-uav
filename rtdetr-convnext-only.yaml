@@ -1,0 +1,155 @@
+# ============================================================
+# ConvNeXt-only RT-DETR (single-encoder ablation)
+#
+# Architecture:
+#
+#                  RGB
+#                   |
+#               ConvNeXt
+#            (stage3, stride16)
+#                   |
+#          SingleEncoderPyramid
+#                   |
+#              +----+----+
+#              |    |    |
+#             P3   P4   P5
+#              |    |    |
+#              +----+----+
+#                   |
+#            RT-DETR Decoder
+#                   |
+#                Output
+#
+# NO RT-DETR AIFI
+# NO RT-DETR Encoder
+# NO MobileSAM / CLIP / GatedFusion - single-backbone ablation
+#
+# ConvNeXt:
+#   variant=tiny        (swap to small/base/large below)
+#   FULLY TRAINABLE     (train_mode="full", train_blocks ignored)
+#   in_channels=384     (stage3 output width for tiny/small;
+#                        512 for base, 768 for large - update the
+#                        SingleEncoderPyramid in_channels below if
+#                        you change variant)
+#
+# SingleEncoderPyramid:
+#   out_channels=256    (matches RT-DETR's hidden dim, same as the
+#                        hybrid v2 config, for a fair ablation)
+#   input_type="convnext"
+# ============================================================
+
+nc: 2
+
+
+# ============================================================
+# BACKBONE
+# ============================================================
+
+backbone:
+
+  # ----------------------------------------------------------
+  # 0
+  # ConvNeXt (torchvision, ImageNet-pretrained), truncated to
+  # stage3 (stride 16) - fully convolutional, no letterbox/crop
+  # needed, just runs at whatever input resolution the loader
+  # gives it (must be divisible by 16).
+  #
+  # [variant, train_mode, train_blocks]
+  #
+  # "full" = every ConvNeXt parameter trainable (train_blocks
+  # ignored in full mode, same convention as MobileSAM/CLIP)
+  # ----------------------------------------------------------
+
+  - [-1, 1, ConvNeXtEncoder, ["tiny", "full", 0]]
+
+
+  # ----------------------------------------------------------
+  # 1
+  # Single-encoder feature pyramid (ablation helper)
+  #
+  # [in_channels, out_channels, input_type]
+  #
+  # in_channels=384 matches ConvNeXt-tiny/small's stage3 width.
+  # Use 512 for "base", 768 for "large".
+  # out_channels=256 to match RT-DETR's hidden dim.
+  # ----------------------------------------------------------
+
+  - [-1, 1, SingleEncoderPyramid, [384, 256, "convnext"]]
+
+
+  # ----------------------------------------------------------
+  # 2
+  # P3
+  # ----------------------------------------------------------
+
+  - [1, 1, Index, [256, 0]]
+
+
+  # ----------------------------------------------------------
+  # 3
+  # P4
+  # ----------------------------------------------------------
+
+  - [1, 1, Index, [256, 1]]
+
+
+  # ----------------------------------------------------------
+  # 4
+  # P5
+  # ----------------------------------------------------------
+
+  - [1, 1, Index, [256, 2]]
+
+
+# ============================================================
+# HEAD
+#
+# NO AIFI
+# NO RT-DETR ENCODER
+#
+# Only:
+#
+#   P3/P4/P5
+#       ↓
+#   channel projection
+#       ↓
+#   RT-DETR Decoder
+# ============================================================
+
+head:
+
+  # ----------------------------------------------------------
+  # 5
+  # P3: 256 -> 256 (no-op projection, kept for symmetry / easy
+  # future out_channels changes)
+  # ----------------------------------------------------------
+
+  - [2, 1, Conv, [256, 1, 1, None, 1, 1, False]]
+
+
+  # ----------------------------------------------------------
+  # 6
+  # P4: 256 -> 256
+  # ----------------------------------------------------------
+
+  - [3, 1, Conv, [256, 1, 1, None, 1, 1, False]]
+
+
+  # ----------------------------------------------------------
+  # 7
+  # P5: 256 -> 256
+  # ----------------------------------------------------------
+
+  - [4, 1, Conv, [256, 1, 1, None, 1, 1, False]]
+
+
+  # ----------------------------------------------------------
+  # 8
+  # RT-DETR Decoder
+  #
+  # Directly receives P3/P4/P5.
+  #
+  # NO AIFI.
+  # ----------------------------------------------------------
+
+  - [[5, 6, 7], 1, RTDETRDecoder, [nc]]
